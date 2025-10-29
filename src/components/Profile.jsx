@@ -99,7 +99,44 @@ function Profile() {
     return (total / 1000).toFixed(2);
   }, [xpdata]);
 
-  const projects = useMemo(() => projectsData?.transaction ?? [], [projectsData]);
+  // ---- NEW: group per project (sum positives only, latest date) ----
+  const projects = useMemo(() => {
+    const rows = projectsData?.transaction ?? [];
+    const byProject = new Map();
+
+    for (const tx of rows) {
+      const name = tx?.object?.name || 'Unknown Project';
+      // prefer a stable object id when available (Hasura usually exposes object.id)
+      const key = tx?.object?.id ?? name;
+      const amount = Number(tx?.amount ?? 0);
+      const createdAt = tx?.createdAt || null;
+
+      const prev = byProject.get(key) || {
+        id: key,
+        name,
+        totalKB: 0,
+        createdAt: createdAt,
+      };
+
+      // Sum only positive XP so corrections (negative rows) don't double-show
+      if (amount > 0) prev.totalKB += amount / 1000;
+
+      // Keep latest completion date
+      if (createdAt && (!prev.createdAt || new Date(createdAt) > new Date(prev.createdAt))) {
+        prev.createdAt = createdAt;
+      }
+
+      byProject.set(key, prev);
+    }
+
+    // remove empty/negative totals (in case a project is only negative corrections)
+    const grouped = Array.from(byProject.values()).filter(p => p.totalKB > 0);
+
+    // newest first
+    grouped.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    return grouped;
+  }, [projectsData]);
+
   const latestProjects = useMemo(
     () => latestProjectsData?.transaction ?? [],
     [latestProjectsData]
@@ -240,7 +277,7 @@ function Profile() {
             </div>
           </div>
 
-          {/* Finished Projects */}
+          {/* Finished Projects (grouped) */}
           <div className="card overflow-hidden">
             <div className="px-4 py-5 sm:px-6 bg-purple-600 text-white">
               <h3 className="text-lg leading-6 font-medium">Finished Projects</h3>
@@ -248,16 +285,16 @@ function Profile() {
             <div className="border-t border-white/10">
               <div className="finished-projects-container px-4 py-5 h-[400px] overflow-y-auto">
                 {projects.map((project, index) => (
-                  <div key={project.id} className="mb-4">
+                  <div key={project.id || project.name} className="mb-4">
                     <div className="flex justify-between items-start">
                       <div>
-                        <h3 className="font-semibold text-slate-100">{project.object?.name}</h3>
+                        <h3 className="font-semibold text-slate-100">{project.name}</h3>
                         <p className="text-sm text-slate-300">
-                          Completed: {new Date(project.createdAt).toLocaleDateString()}
+                          Completed: {project.createdAt ? new Date(project.createdAt).toLocaleDateString() : '—'}
                         </p>
                       </div>
                       <span className="badge">
-                        {(project.amount / 1000).toFixed(2)} KB
+                        {project.totalKB.toFixed(2)} KB
                       </span>
                     </div>
                     {index < projects.length - 1 && <hr className="my-2 border-white/10" />}
