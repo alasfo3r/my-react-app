@@ -2,13 +2,14 @@
 import React, { useEffect, useState, useMemo } from 'react';
 // NOTE: use this path to avoid the "useQuery not found" error with some bundles
 import { useQuery } from '@apollo/client/react/hooks';
+import XPByProjectChart from './Graphs/XPByProjectChart';
 
 import {
   GET_USER_INFO,
   GEt_Total_XPInKB,
   GET_PROJECTS_WITH_XP,
   GET_PROJECTS_PASS_FAIL,
-  GET_LATEST_PROJECTS_WITH_XP,
+  GET_LATEST_PROJECTS_WITH_XP, // kept in case you still need elsewhere
   GET_PISCINE_GO_XP,
   GET_PISCINE_JS_XP,
   GET_PROJECT_XP,
@@ -16,7 +17,6 @@ import {
 } from '../graphql/queries';
 
 import PassFailChart from './Graphs/PassFailChart';
-import XPByProjectChart from './Graphs/XPByProjectChart';
 
 function Profile() {
   // 1) Who am I?
@@ -52,8 +52,8 @@ function Profile() {
   const { data: passFailData, loading: passFailLoading, error: passFailError } =
     useQuery(GET_PROJECTS_PASS_FAIL, common);
 
-  const { data: latestProjectsData, loading: latestProjectsLoading, error: latestProjectsError } =
-    useQuery(GET_LATEST_PROJECTS_WITH_XP, common);
+  // (We no longer use latestProjects for the chart; totals come from finished projects)
+  useQuery(GET_LATEST_PROJECTS_WITH_XP, common);
 
   // 4) Safe computed values
   const piscineGoXPTotal = useMemo(() => {
@@ -75,11 +75,6 @@ function Profile() {
     const total = xpdata?.transaction_aggregate?.aggregate?.sum?.amount ?? 0;
     return (total / 1000).toFixed(2);
   }, [xpdata]);
-
-  const latestProjects = useMemo(
-    () => latestProjectsData?.transaction ?? [],
-    [latestProjectsData]
-  );
 
   const { passCount, failCount } = useMemo(() => {
     const rows = passFailData?.progress ?? [];
@@ -108,14 +103,14 @@ function Profile() {
       nameById.set(objectId, name);
 
       if (amt > 0) {
-        totalsById.set(objectId, (totalsById.get(objectId) || 0) + amt / 1000);
+        totalsById.set(objectId, (totalsById.get(objectId) || 0) + amt / 1000); // KB (÷1000)
         if (t && (!lastXpDateById.get(objectId) || t > lastXpDateById.get(objectId))) {
           lastXpDateById.set(objectId, t);
         }
       }
     }
 
-    // Hasura already returns earliest PASS per objectId thanks to distinct_on + ascending order
+    // Hasura returns earliest PASS per objectId thanks to distinct_on + ascending order
     const result = [];
     const included = new Set();
 
@@ -128,21 +123,18 @@ function Profile() {
       const totalKB = totalsById.get(objectId) || 0;
       if (totalKB <= 0) continue; // hide projects with no positive XP
 
-      const completedAt = (pr?.updatedAt || pr?.createdAt || lastXpDateById.get(objectId)?.toISOString() || null);
+      const completedAt =
+        pr?.updatedAt || pr?.createdAt || lastXpDateById.get(objectId)?.toISOString() || null;
 
-      result.push({
-        id: objectId,
-        name,
-        totalKB,
-        createdAt: completedAt,
-      });
+      result.push({ id: objectId, name, totalKB, createdAt: completedAt });
     }
-
-    // (Optional) If an item has XP but no pass row, you could add a fallback block here.
 
     result.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
     return result;
   }, [projectsXPData, finishedData]);
+
+  // Slice the list for the chart (show latest 12 finished projects by our computed order)
+  const projectsForChart = useMemo(() => projects.slice(0, 12), [projects]);
 
   // 6) UI guards
   if (userLoading) return <div className="text-center text-indigo-300 font-bold">Loading user…</div>;
@@ -153,7 +145,6 @@ function Profile() {
     xpLoading ||
     projectsLoading ||
     passFailLoading ||
-    latestProjectsLoading ||
     piscineGoXPLoading ||
     piscineJsXPLoading ||
     projectXPLoading ||
@@ -165,7 +156,6 @@ function Profile() {
     xpError ||
     projectsError ||
     passFailError ||
-    latestProjectsError ||
     piscineGoXPError ||
     piscineJsXPError ||
     projectXPError ||
@@ -297,7 +287,7 @@ function Profile() {
           <div className="card p-6 w-full">
             <h2 className="text-xl font-bold mb-4 text-purple-300">XP by Latest 12 Projects</h2>
             <div className="w-full h-[500px]">
-              <XPByProjectChart projects={latestProjects} />
+              <XPByProjectChart projects={projectsForChart} />
             </div>
           </div>
           <div className="card p-6 w-full">
