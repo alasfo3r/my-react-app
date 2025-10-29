@@ -1,6 +1,5 @@
 // src/components/Profile.jsx
 import React, { useEffect, useState, useMemo } from 'react';
-// NOTE: use this path to avoid the "useQuery not found" error with some bundles
 import { useQuery } from '@apollo/client/react/hooks';
 
 import {
@@ -12,130 +11,70 @@ import {
   GET_PISCINE_GO_XP,
   GET_PISCINE_JS_XP,
   GET_PROJECT_XP,
+  GET_FINISHED_PROJECTS,        // ⬅️ NEW
 } from '../graphql/queries';
 
 import PassFailChart from './Graphs/PassFailChart';
 import XPByProjectChart from './Graphs/XPByProjectChart';
 
 function Profile() {
-  // 1) Who am I? (no vars)
-  const {
-    data: userData,
-    loading: userLoading,
-    error: userError,
-  } = useQuery(GET_USER_INFO);
+  const { data: userData, loading: userLoading, error: userError } = useQuery(GET_USER_INFO);
 
-  // 2) Grab userId once it arrives
   const [userId, setUserId] = useState(null);
   useEffect(() => {
     const id = userData?.user?.[0]?.id ?? null;
     setUserId(id);
   }, [userData]);
 
-  // 3) All other queries are skipped until userId is ready
   const common = { skip: !userId };
 
-  const {
-    data: xpdata,
-    loading: xpLoading,
-    error: xpError,
-  } = useQuery(GEt_Total_XPInKB, { variables: { userId }, ...common });
+  const { data: xpdata, loading: xpLoading, error: xpError } =
+    useQuery(GEt_Total_XPInKB, { variables: { userId }, ...common });
 
-  const {
-    data: piscineGoXPData,
-    loading: piscineGoXPLoading,
-    error: piscineGoXPError,
-  } = useQuery(GET_PISCINE_GO_XP, { variables: { userId }, ...common });
+  const { data: piscineGoXPData, loading: piscineGoXPLoading, error: piscineGoXPError } =
+    useQuery(GET_PISCINE_GO_XP, { variables: { userId }, ...common });
 
-  const {
-    data: piscineJsXPData,
-    loading: piscineJsXPLoading,
-    error: piscineJsXPError,
-  } = useQuery(GET_PISCINE_JS_XP, { variables: { userId }, ...common });
+  const { data: piscineJsXPData, loading: piscineJsXPLoading, error: piscineJsXPError } =
+    useQuery(GET_PISCINE_JS_XP, { variables: { userId }, ...common });
 
-  const {
-    data: projectXPData,
-    loading: projectXPLoading,
-    error: projectXPError,
-  } = useQuery(GET_PROJECT_XP, { variables: { userId }, ...common });
+  const { data: projectXPData, loading: projectXPLoading, error: projectXPError } =
+    useQuery(GET_PROJECT_XP, { variables: { userId }, ...common });
 
-  const {
-    data: projectsData,
-    loading: projectsLoading,
-    error: projectsError,
-  } = useQuery(GET_PROJECTS_WITH_XP, { variables: { userId }, ...common });
+  // All project XP transactions (for totals)
+  const { data: projectsXPData, loading: projectsLoading, error: projectsError } =
+    useQuery(GET_PROJECTS_WITH_XP, { variables: { userId }, ...common });
 
-  const {
-    data: passFailData,
-    loading: passFailLoading,
-    error: passFailError,
-  } = useQuery(GET_PROJECTS_PASS_FAIL, { variables: { userId }, ...common });
+  // Finished projects (for accurate completion date)
+  const { data: finishedData, loading: finishedLoading, error: finishedError } =
+    useQuery(GET_FINISHED_PROJECTS, { variables: { userId }, ...common });
 
-  const {
-    data: latestProjectsData,
-    loading: latestProjectsLoading,
-    error: latestProjectsError,
-  } = useQuery(GET_LATEST_PROJECTS_WITH_XP, { variables: { userId }, ...common });
+  const { data: passFailData, loading: passFailLoading, error: passFailError } =
+    useQuery(GET_PROJECTS_PASS_FAIL, { variables: { userId }, ...common });
 
-  // 4) Safe computed values (no crashes on undefined)
+  const { data: latestProjectsData, loading: latestProjectsLoading, error: latestProjectsError } =
+    useQuery(GET_LATEST_PROJECTS_WITH_XP, { variables: { userId }, ...common });
+
+  // ---- Totals & charts ----
   const piscineGoXPTotal = useMemo(() => {
     const rows = piscineGoXPData?.transaction ?? [];
     const sum = rows.reduce((acc, tx) => acc + (tx?.amount ?? 0), 0);
-    return sum / 1000; // KB
+    return sum / 1000;
   }, [piscineGoXPData]);
 
   const piscineJsXPTotal = useMemo(() => {
     const sum = piscineJsXPData?.transaction_aggregate?.aggregate?.sum?.amount ?? 0;
-    return sum / 1000; // KB
+    return sum / 1000;
   }, [piscineJsXPData]);
 
   const projectXPTotal = useMemo(() => {
     const sum = projectXPData?.transaction_aggregate?.aggregate?.sum?.amount ?? 0;
-    return sum / 1000; // KB
+    return sum / 1000;
   }, [projectXPData]);
 
   const totalXPInKB = useMemo(() => {
     const total = xpdata?.transaction_aggregate?.aggregate?.sum?.amount ?? 0;
     return (total / 1000).toFixed(2);
   }, [xpdata]);
-
-  // ---- NEW: group per project (sum positives only, latest date) ----
-  const projects = useMemo(() => {
-    const rows = projectsData?.transaction ?? [];
-    const byProject = new Map();
-
-    for (const tx of rows) {
-      const name = tx?.object?.name || 'Unknown Project';
-      // prefer a stable object id when available (Hasura usually exposes object.id)
-      const key = tx?.object?.id ?? name;
-      const amount = Number(tx?.amount ?? 0);
-      const createdAt = tx?.createdAt || null;
-
-      const prev = byProject.get(key) || {
-        id: key,
-        name,
-        totalKB: 0,
-        createdAt: createdAt,
-      };
-
-      // Sum only positive XP so corrections (negative rows) don't double-show
-      if (amount > 0) prev.totalKB += amount / 1000;
-
-      // Keep latest completion date
-      if (createdAt && (!prev.createdAt || new Date(createdAt) > new Date(prev.createdAt))) {
-        prev.createdAt = createdAt;
-      }
-
-      byProject.set(key, prev);
-    }
-
-    // remove empty/negative totals (in case a project is only negative corrections)
-    const grouped = Array.from(byProject.values()).filter(p => p.totalKB > 0);
-
-    // newest first
-    grouped.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-    return grouped;
-  }, [projectsData]);
 
   const latestProjects = useMemo(
     () => latestProjectsData?.transaction ?? [],
@@ -149,38 +88,59 @@ function Profile() {
     return { passCount: pass, failCount: fail };
   }, [passFailData]);
 
-  // 5) UI guards
-  if (userLoading) {
-    return <div className="text-center text-indigo-300 font-bold">Loading user…</div>;
-  }
-  if (userError) {
-    return <div className="text-center text-amber-400 font-bold">Error: {String(userError.message || userError)}</div>;
-  }
-  if (!userId) {
-    return <div className="text-center text-indigo-300 font-bold">Resolving account…</div>;
-  }
+  // ---- Finished Projects list (correct date from progress; totals from transactions) ----
+  const projects = useMemo(() => {
+    const xpRows = projectsXPData?.transaction ?? [];
+    const finishedRows = finishedData?.progress ?? [];
+
+    // Sum positive XP per objectId
+    const totalsByObjectId = new Map();
+    for (const tx of xpRows) {
+      const objectId = tx?.objectId ?? tx?.object?.id ?? null;
+      if (!objectId) continue;
+      const amount = Number(tx?.amount ?? 0);
+      if (amount > 0) {
+        totalsByObjectId.set(objectId, (totalsByObjectId.get(objectId) || 0) + amount / 1000);
+      }
+    }
+
+    // Build final list from finished rows (only passed projects)
+    const result = [];
+    const seen = new Set();
+    for (const pr of finishedRows) {
+      const objectId = pr?.objectId ?? pr?.object?.id ?? null;
+      if (!objectId || seen.has(objectId)) continue; // avoid dupes if multiple validations recorded
+      seen.add(objectId);
+
+      const name = pr?.object?.name || 'Unknown Project';
+      const completedAt = pr?.updatedAt || pr?.createdAt || null;
+      const totalKB = totalsByObjectId.get(objectId) || 0;
+
+      // Only show if there is some positive XP (typical for passed projects)
+      if (totalKB > 0) {
+        result.push({ id: objectId, name, totalKB, createdAt: completedAt });
+      }
+    }
+
+    // newest first by completed date
+    result.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    return result;
+  }, [projectsXPData, finishedData]);
+
+  // ---- UI guards ----
+  if (userLoading) return <div className="text-center text-indigo-300 font-bold">Loading user…</div>;
+  if (userError)   return <div className="text-center text-amber-400 font-bold">Error: {String(userError.message || userError)}</div>;
+  if (!userId)     return <div className="text-center text-indigo-300 font-bold">Resolving account…</div>;
 
   const anyLoading =
-    xpLoading ||
-    projectsLoading ||
-    passFailLoading ||
-    latestProjectsLoading ||
-    piscineGoXPLoading ||
-    piscineJsXPLoading ||
-    projectXPLoading;
+    xpLoading || projectsLoading || passFailLoading || latestProjectsLoading ||
+    piscineGoXPLoading || piscineJsXPLoading || projectXPLoading || finishedLoading;
 
-  if (anyLoading) {
-    return <div className="text-center text-indigo-300 font-bold">Loading…</div>;
-  }
+  if (anyLoading) return <div className="text-center text-indigo-300 font-bold">Loading…</div>;
 
   const anyError =
-    xpError ||
-    projectsError ||
-    passFailError ||
-    latestProjectsError ||
-    piscineGoXPError ||
-    piscineJsXPError ||
-    projectXPError;
+    xpError || projectsError || passFailError || latestProjectsError ||
+    piscineGoXPError || piscineJsXPError || projectXPError || finishedError;
 
   if (anyError) {
     const msg = (anyError && anyError.message) || String(anyError);
@@ -196,7 +156,7 @@ function Profile() {
     }
   };
 
-  // 6) Render
+  // ---- Render ----
   return (
     <div className="profile-bg">
       <div className="container mx-auto p-4">
@@ -277,7 +237,7 @@ function Profile() {
             </div>
           </div>
 
-          {/* Finished Projects (grouped) */}
+          {/* Finished Projects (date = progress.updatedAt, totals from XP) */}
           <div className="card overflow-hidden">
             <div className="px-4 py-5 sm:px-6 bg-purple-600 text-white">
               <h3 className="text-lg leading-6 font-medium">Finished Projects</h3>
@@ -293,9 +253,7 @@ function Profile() {
                           Completed: {project.createdAt ? new Date(project.createdAt).toLocaleDateString() : '—'}
                         </p>
                       </div>
-                      <span className="badge">
-                        {project.totalKB.toFixed(2)} KB
-                      </span>
+                      <span className="badge">{project.totalKB.toFixed(2)} KB</span>
                     </div>
                     {index < projects.length - 1 && <hr className="my-2 border-white/10" />}
                   </div>
