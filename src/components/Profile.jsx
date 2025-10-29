@@ -1,5 +1,6 @@
 // src/components/Profile.jsx
 import React, { useEffect, useState, useMemo } from 'react';
+// NOTE: use this path to avoid the "useQuery not found" error with some bundles
 import { useQuery } from '@apollo/client/react/hooks';
 
 import {
@@ -11,54 +12,53 @@ import {
   GET_PISCINE_GO_XP,
   GET_PISCINE_JS_XP,
   GET_PROJECT_XP,
-  GET_FINISHED_PROJECTS,        // ⬅️ NEW
+  GET_FINISHED_PROJECTS,
 } from '../graphql/queries';
 
 import PassFailChart from './Graphs/PassFailChart';
 import XPByProjectChart from './Graphs/XPByProjectChart';
 
 function Profile() {
+  // 1) Who am I?
   const { data: userData, loading: userLoading, error: userError } = useQuery(GET_USER_INFO);
 
+  // 2) userId once available
   const [userId, setUserId] = useState(null);
-  useEffect(() => {
-    const id = userData?.user?.[0]?.id ?? null;
-    setUserId(id);
-  }, [userData]);
+  useEffect(() => setUserId(userData?.user?.[0]?.id ?? null), [userData]);
 
-  const common = { skip: !userId };
+  // 3) Remaining queries (skip until userId)
+  const common = { skip: !userId, variables: { userId } };
 
   const { data: xpdata, loading: xpLoading, error: xpError } =
-    useQuery(GEt_Total_XPInKB, { variables: { userId }, ...common });
+    useQuery(GEt_Total_XPInKB, common);
 
   const { data: piscineGoXPData, loading: piscineGoXPLoading, error: piscineGoXPError } =
-    useQuery(GET_PISCINE_GO_XP, { variables: { userId }, ...common });
+    useQuery(GET_PISCINE_GO_XP, common);
 
   const { data: piscineJsXPData, loading: piscineJsXPLoading, error: piscineJsXPError } =
-    useQuery(GET_PISCINE_JS_XP, { variables: { userId }, ...common });
+    useQuery(GET_PISCINE_JS_XP, common);
 
   const { data: projectXPData, loading: projectXPLoading, error: projectXPError } =
-    useQuery(GET_PROJECT_XP, { variables: { userId }, ...common });
+    useQuery(GET_PROJECT_XP, common);
 
-  // All project XP transactions (for totals)
+  // For finished list
   const { data: projectsXPData, loading: projectsLoading, error: projectsError } =
-    useQuery(GET_PROJECTS_WITH_XP, { variables: { userId }, ...common });
+    useQuery(GET_PROJECTS_WITH_XP, common);
 
-  // Finished projects (for accurate completion date)
   const { data: finishedData, loading: finishedLoading, error: finishedError } =
-    useQuery(GET_FINISHED_PROJECTS, { variables: { userId }, ...common });
+    useQuery(GET_FINISHED_PROJECTS, common);
 
+  // For charts
   const { data: passFailData, loading: passFailLoading, error: passFailError } =
-    useQuery(GET_PROJECTS_PASS_FAIL, { variables: { userId }, ...common });
+    useQuery(GET_PROJECTS_PASS_FAIL, common);
 
   const { data: latestProjectsData, loading: latestProjectsLoading, error: latestProjectsError } =
-    useQuery(GET_LATEST_PROJECTS_WITH_XP, { variables: { userId }, ...common });
+    useQuery(GET_LATEST_PROJECTS_WITH_XP, common);
 
-  // ---- Totals & charts ----
+  // 4) Safe computed values
   const piscineGoXPTotal = useMemo(() => {
     const rows = piscineGoXPData?.transaction ?? [];
-    const sum = rows.reduce((acc, tx) => acc + (tx?.amount ?? 0), 0);
-    return sum / 1000;
+    return rows.reduce((acc, tx) => acc + (tx?.amount ?? 0), 0) / 1000;
   }, [piscineGoXPData]);
 
   const piscineJsXPTotal = useMemo(() => {
@@ -83,64 +83,93 @@ function Profile() {
 
   const { passCount, failCount } = useMemo(() => {
     const rows = passFailData?.progress ?? [];
-    const pass = rows.filter((r) => r?.grade != null && r.grade >= 1).length;
-    const fail = rows.filter((r) => r?.grade != null && r.grade < 1).length;
-    return { passCount: pass, failCount: fail };
+    return {
+      passCount: rows.filter((r) => r?.grade != null && r.grade >= 1).length,
+      failCount: rows.filter((r) => r?.grade != null && r.grade < 1).length,
+    };
   }, [passFailData]);
 
-  // ---- Finished Projects list (correct date from progress; totals from transactions) ----
+  // 5) Finished Projects (date from Hasura earliest PASS; XP from transactions; fallback to latest XP date)
   const projects = useMemo(() => {
     const xpRows = projectsXPData?.transaction ?? [];
     const finishedRows = finishedData?.progress ?? [];
 
-    // Sum positive XP per objectId
-    const totalsByObjectId = new Map();
+    // Sum positive XP and remember latest positive XP timestamp
+    const totalsById = new Map();
+    const lastXpDateById = new Map();
+    const nameById = new Map();
+
     for (const tx of xpRows) {
       const objectId = tx?.objectId ?? tx?.object?.id ?? null;
       if (!objectId) continue;
-      const amount = Number(tx?.amount ?? 0);
-      if (amount > 0) {
-        totalsByObjectId.set(objectId, (totalsByObjectId.get(objectId) || 0) + amount / 1000);
+      const amt = Number(tx?.amount ?? 0);
+      const t = tx?.createdAt ? new Date(tx.createdAt) : null;
+      const name = tx?.object?.name || 'Unknown Project';
+      nameById.set(objectId, name);
+
+      if (amt > 0) {
+        totalsById.set(objectId, (totalsById.get(objectId) || 0) + amt / 1000);
+        if (t && (!lastXpDateById.get(objectId) || t > lastXpDateById.get(objectId))) {
+          lastXpDateById.set(objectId, t);
+        }
       }
     }
 
-    // Build final list from finished rows (only passed projects)
+    // Hasura already returns earliest PASS per objectId thanks to distinct_on + ascending order
     const result = [];
-    const seen = new Set();
+    const included = new Set();
+
     for (const pr of finishedRows) {
       const objectId = pr?.objectId ?? pr?.object?.id ?? null;
-      if (!objectId || seen.has(objectId)) continue; // avoid dupes if multiple validations recorded
-      seen.add(objectId);
+      if (!objectId || included.has(objectId)) continue;
+      included.add(objectId);
 
-      const name = pr?.object?.name || 'Unknown Project';
-      const completedAt = pr?.updatedAt || pr?.createdAt || null;
-      const totalKB = totalsByObjectId.get(objectId) || 0;
+      const name = pr?.object?.name || nameById.get(objectId) || 'Unknown Project';
+      const totalKB = totalsById.get(objectId) || 0;
+      if (totalKB <= 0) continue; // hide projects with no positive XP
 
-      // Only show if there is some positive XP (typical for passed projects)
-      if (totalKB > 0) {
-        result.push({ id: objectId, name, totalKB, createdAt: completedAt });
-      }
+      const completedAt = (pr?.updatedAt || pr?.createdAt || lastXpDateById.get(objectId)?.toISOString() || null);
+
+      result.push({
+        id: objectId,
+        name,
+        totalKB,
+        createdAt: completedAt,
+      });
     }
 
-    // newest first by completed date
-    result.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    // (Optional) If an item has XP but no pass row, you could add a fallback block here.
+
+    result.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
     return result;
   }, [projectsXPData, finishedData]);
 
-  // ---- UI guards ----
+  // 6) UI guards
   if (userLoading) return <div className="text-center text-indigo-300 font-bold">Loading user…</div>;
   if (userError)   return <div className="text-center text-amber-400 font-bold">Error: {String(userError.message || userError)}</div>;
   if (!userId)     return <div className="text-center text-indigo-300 font-bold">Resolving account…</div>;
 
   const anyLoading =
-    xpLoading || projectsLoading || passFailLoading || latestProjectsLoading ||
-    piscineGoXPLoading || piscineJsXPLoading || projectXPLoading || finishedLoading;
+    xpLoading ||
+    projectsLoading ||
+    passFailLoading ||
+    latestProjectsLoading ||
+    piscineGoXPLoading ||
+    piscineJsXPLoading ||
+    projectXPLoading ||
+    finishedLoading;
 
   if (anyLoading) return <div className="text-center text-indigo-300 font-bold">Loading…</div>;
 
   const anyError =
-    xpError || projectsError || passFailError || latestProjectsError ||
-    piscineGoXPError || piscineJsXPError || projectXPError || finishedError;
+    xpError ||
+    projectsError ||
+    passFailError ||
+    latestProjectsError ||
+    piscineGoXPError ||
+    piscineJsXPError ||
+    projectXPError ||
+    finishedError;
 
   if (anyError) {
     const msg = (anyError && anyError.message) || String(anyError);
@@ -156,7 +185,7 @@ function Profile() {
     }
   };
 
-  // ---- Render ----
+  // 7) Render
   return (
     <div className="profile-bg">
       <div className="container mx-auto p-4">
@@ -237,7 +266,7 @@ function Profile() {
             </div>
           </div>
 
-          {/* Finished Projects (date = progress.updatedAt, totals from XP) */}
+          {/* Finished Projects */}
           <div className="card overflow-hidden">
             <div className="px-4 py-5 sm:px-6 bg-purple-600 text-white">
               <h3 className="text-lg leading-6 font-medium">Finished Projects</h3>
