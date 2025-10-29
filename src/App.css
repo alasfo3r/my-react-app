@@ -1,0 +1,27 @@
+@reference "tailwindcss";
+
+body {
+  background-image:
+    radial-gradient(1200px 600px at 10% 10%, rgba(99,102,241,.25), transparent 60%),
+    radial-gradient(900px 500px at 90% 80%, rgba(16,185,129,.18), transparent 60%),
+    linear-gradient(160deg, #0b1020 0%, #111633 45%, #0f1a22 100%),
+    url('/graphqlimg.jpg');
+  background-size: cover, cover, cover, cover;
+  background-position: center, center, center, center;
+  background-repeat: no-repeat;
+
+  @apply text-slate-100 font-sans;
+}
+
+.card         { @apply bg-slate-900/60 backdrop-blur border border-white/10 rounded-2xl shadow-xl; }
+.panel-header { @apply bg-gradient-to-r from-cyan-400 via-indigo-400 to-fuchsia-500 text-white px-5 py-4 font-semibold rounded-t-2xl; }
+.badge        { @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ring-1 ring-inset ring-indigo-300/40 bg-indigo-300/15 text-indigo-200; }
+
+.loading { @apply text-center text-indigo-300 font-bold text-lg; }
+.error   { @apply text-center text-amber-400 font-semibold; }
+
+.finished-projects-container { max-height: 430px; overflow-y: auto; padding-right: 10px; }
+.finished-projects-container::-webkit-scrollbar { width: 8px; }
+.finished-projects-container::-webkit-scrollbar-track { background: rgba(255,255,255,.06); border-radius: 4px; }
+.finished-projects-container::-webkit-scrollbar-thumb { background: rgba(99,102,241,.35); border-radius: 4px; }
+.finished-projects-container::-webkit-scrollbar-thumb:hover { background: rgba(99,102,241,.55); }

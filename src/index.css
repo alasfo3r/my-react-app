@@ -1,0 +1,27 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
+
+:root {
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto,
+    "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji";
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+/* === Global dark background === */
+body {
+  background: radial-gradient(1200px 600px at 10% 10%, rgba(99, 102, 241, 0.25), transparent 60%),
+              radial-gradient(900px 500px at 90% 80%, rgba(16, 185, 129, 0.18), transparent 60%),
+              linear-gradient(160deg, #0b1020 0%, #111633 45%, #0f1a22 100%);
+  background-attachment: fixed; /* ensures the gradient fills entire page */
+  color: #f1f5f9; /* Tailwind slate-100 */
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
